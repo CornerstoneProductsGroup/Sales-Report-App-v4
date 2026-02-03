@@ -1940,9 +1940,8 @@ with tab_inventory:
         d = d[d["StartDate"].notna()].copy()
         d["Year"] = d["StartDate"].dt.year.astype(int)
 
-        st.markdown("### Rows by year")
+        st.markdown("### By year")
         by_year = d.groupby("Year", as_index=False).agg(
-            Rows=("SKU","size"),
             Units=("Units","sum"),
             Sales=("Sales","sum"),
             Retailers=("Retailer","nunique"),
@@ -1950,37 +1949,35 @@ with tab_inventory:
             SKUs=("SKU","nunique"),
         ).sort_values("Year", ascending=False)
         st.dataframe(by_year.style.format({
-            "Rows": fmt_int, "Units": fmt_int, "Sales": fmt_currency,
+            "Units": fmt_int, "Sales": fmt_currency,
             "Retailers": fmt_int, "Vendors": fmt_int, "SKUs": fmt_int
         }), use_container_width=True, hide_index=True)
 
-        st.markdown("### Rows by retailer (selected year)")
+        st.markdown("### By retailer (selected year)")
         years = sorted(d["Year"].unique().tolist())
         sel_y = st.selectbox("Year", options=years, index=len(years)-1, key="inv_year")
         dy = d[d["Year"] == int(sel_y)].copy()
         if "SourceFile" not in dy.columns:
             dy["SourceFile"] = ""
         by_ret = dy.groupby("Retailer", as_index=False).agg(
-            Rows=("SKU","size"),
             Units=("Units","sum"),
             Sales=("Sales","sum"),
             SKUs=("SKU","nunique"),
             Sources=("SourceFile","nunique"),
         ).sort_values("Sales", ascending=False)
         st.dataframe(by_ret.style.format({
-            "Rows": fmt_int, "Units": fmt_int, "Sales": fmt_currency, "SKUs": fmt_int, "Sources": fmt_int
+            "Units": fmt_int, "Sales": fmt_currency, "SKUs": fmt_int, "Sources": fmt_int
         }), use_container_width=True, height=_table_height(by_ret, max_px=900), hide_index=True)
 
-        st.markdown("### Rows by source file (selected year)")
+        st.markdown("### By source file (selected year)")
         by_src = dy.groupby("SourceFile", as_index=False).agg(
-            Rows=("SKU","size"),
             Units=("Units","sum"),
             Sales=("Sales","sum"),
             Retailers=("Retailer","nunique"),
             SKUs=("SKU","nunique"),
         ).sort_values("Sales", ascending=False)
         st.dataframe(by_src.style.format({
-            "Rows": fmt_int, "Units": fmt_int, "Sales": fmt_currency, "Retailers": fmt_int, "SKUs": fmt_int
+            "Units": fmt_int, "Sales": fmt_currency, "Retailers": fmt_int, "SKUs": fmt_int
         }), use_container_width=True, height=_table_height(by_src, max_px=900), hide_index=True)
 
 
