@@ -1780,12 +1780,31 @@ with tab_year_summary:
             tn2 = tn[["SKU","A_val","B_val","Delta","Bucket"]].rename(columns={"A_val": str(base_year), "B_val": str(comp_year)})
 
             st.markdown("**Top increases**")
-            st.dataframe(tp2.style.format({str(base_year): _fmt, str(comp_year): _fmt, "Delta": _fmt})
-                         , use_container_width=True, height=_table_height(tp2, max_px=700), hide_index=True)
+            tp2_disp = tp2.copy()
+            # Avoid Styler (pyarrow duplicate-column edge cases). Format numbers as strings.
+            colA = str(base_year)
+            colB = str(comp_year)
+            if colA == colB:
+                colA = f"{colA} (A)"
+                colB = f"{colB} (B)"
+                tp2_disp = tp2_disp.rename(columns={str(base_year): colA, str(comp_year): colB})
+            num_cols = [c for c in [colA, colB, "Delta"] if c in tp2_disp.columns]
+            for c in num_cols:
+                tp2_disp[c] = tp2_disp[c].apply(_fmt)
+            st.dataframe(tp2_disp, use_container_width=True, height=_table_height(tp2_disp, max_px=700), hide_index=True)
 
             st.markdown("**Top decreases**")
-            st.dataframe(tn2.style.format({str(base_year): _fmt, str(comp_year): _fmt, "Delta": _fmt})
-                         , use_container_width=True, height=_table_height(tn2, max_px=700), hide_index=True)
+            tn2_disp = tn2.copy()
+            colA = str(base_year)
+            colB = str(comp_year)
+            if colA == colB:
+                colA = f"{colA} (A)"
+                colB = f"{colB} (B)"
+                tn2_disp = tn2_disp.rename(columns={str(base_year): colA, str(comp_year): colB})
+            num_cols = [c for c in [colA, colB, "Delta"] if c in tn2_disp.columns]
+            for c in num_cols:
+                tn2_disp[c] = tn2_disp[c].apply(_fmt)
+            st.dataframe(tn2_disp, use_container_width=True, height=_table_height(tn2_disp, max_px=700), hide_index=True)
 
         # -------------------------
         # Concentration risk (uses same toggle)
