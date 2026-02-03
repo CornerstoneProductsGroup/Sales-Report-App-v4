@@ -1781,13 +1781,11 @@ with tab_year_summary:
 
             st.markdown("**Top increases**")
             st.dataframe(tp2.style.format({str(base_year): _fmt, str(comp_year): _fmt, "Delta": _fmt})
-                         .applymap(lambda v: f"color: {_color(v)};", subset=["Delta"]),
-                         use_container_width=True, height=_table_height(tp2, max_px=700), hide_index=True)
+                         , use_container_width=True, height=_table_height(tp2, max_px=700), hide_index=True)
 
             st.markdown("**Top decreases**")
             st.dataframe(tn2.style.format({str(base_year): _fmt, str(comp_year): _fmt, "Delta": _fmt})
-                         .applymap(lambda v: f"color: {_color(v)};", subset=["Delta"]),
-                         use_container_width=True, height=_table_height(tn2, max_px=700), hide_index=True)
+                         , use_container_width=True, height=_table_height(tn2, max_px=700), hide_index=True)
 
         # -------------------------
         # Concentration risk (uses same toggle)
