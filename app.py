@@ -171,6 +171,23 @@ def fmt_int(x) -> str:
 
 
 
+
+
+def fmt_currency_signed(x) -> str:
+    try:
+        x = float(x)
+    except Exception:
+        return str(x)
+    return f"-${abs(x):,.0f}" if x < 0 else f"${x:,.0f}"
+
+def fmt_int_signed(x) -> str:
+    try:
+        x = float(x)
+    except Exception:
+        return str(x)
+    x = int(round(x))
+    return f"-{abs(x):,}" if x < 0 else f"{x:,}"
+
 def make_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure dataframe has unique column names (pyarrow requirement)."""
     cols = list(df.columns)
@@ -988,6 +1005,7 @@ with st.sidebar:
 view_year = st.session_state.get('view_year', year)
 
 
+
 # Load vendor map (persistent)
 BUNDLED_VENDOR_MAP = Path(__file__).parent / "vendor_map.xlsx"
 
@@ -996,7 +1014,6 @@ try:
     if (not DEFAULT_VENDOR_MAP.exists()) and BUNDLED_VENDOR_MAP.exists():
         DEFAULT_VENDOR_MAP.write_bytes(BUNDLED_VENDOR_MAP.read_bytes())
 except Exception:
-    # If we can't write (rare), we'll still allow session upload below.
     pass
 
 if vm_upload is not None:
@@ -1764,7 +1781,7 @@ with tab_year_summary:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric(f"Units ({base_year})", fmt_int(uA), delta=f"{fmt_int(uD)} ({uP*100:.1f}%)" if pd.notna(uP) else fmt_int(uD))
         k2.metric(f"Units ({comp_year})", fmt_int(uB))
-        k3.metric(f"Sales ({base_year})", fmt_currency(sA), delta=f"{fmt_currency(sD)} ({sP*100:.1f}%)" if pd.notna(sP) else fmt_currency(sD))
+        k3.metric(f"Sales ({base_year})", fmt_currency(sA), delta=f"{fmt_currency_signed(sD)} ({sP*100:.1f}%)" if pd.notna(sP) else fmt_currency_signed(sD))
         k4.metric(f"Sales ({comp_year})", fmt_currency(sB))
 
         # -------------------------
@@ -1798,7 +1815,7 @@ with tab_year_summary:
             return (x / total_delta) if total_delta else np.nan
 
         def _fmt(v):
-            return fmt_currency(v) if value_col == "Sales" else fmt_int(v)
+            return fmt_currency_signed(v) if value_col == "Sales" else fmt_int_signed(v)
 
         cD1, cD2, cD3, cD4 = st.columns(4)
         cD1.metric("New SKUs", _fmt(b_new), delta=(f"{_pct(b_new)*100:.1f}%" if pd.notna(_pct(b_new)) else "—"))
