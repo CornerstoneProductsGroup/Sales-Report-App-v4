@@ -1740,8 +1740,9 @@ with tab_year_summary:
             comp_opts = [y for y in years if y != int(base_year)]
         if not comp_opts:
             st.warning("Only one year of data available. Add another year to compare.")
-            st.stop()
-        comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="ys_comp")
+            comp_year = int(base_year)  # fallback
+        else:
+            comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="ys_comp")
 
         basis = st.radio("Basis (tables + drivers)", options=["Sales", "Units"], index=0, horizontal=True, key="ys_basis")
         value_col = "Sales" if basis == "Sales" else "Units"
@@ -2007,8 +2008,9 @@ with tab_alerts:
             comp_opts = [y for y in years if y != int(base_year)]
         if not comp_opts:
             st.warning("Only one year of data available. Add another year to compare.")
-            st.stop()
-        comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="al_comp")
+            comp_year = int(base_year)  # fallback
+        else:
+            comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="al_comp")
 
         basis = st.radio("Basis", options=["Sales", "Units"], index=0, horizontal=True, key="al_basis")
         value_col = "Sales" if basis == "Sales" else "Units"
