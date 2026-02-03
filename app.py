@@ -1161,6 +1161,7 @@ tabs = st.tabs([
     "Executive Summary",
     "WoW Exceptions",
     "Comparison",
+    "SKU Comparison",
     "Year Summary",
     "Data Inventory",
     "Insights & Alerts",
@@ -1171,8 +1172,9 @@ tabs = st.tabs([
     "Bulk Data Upload",
 ])
 (tab_retail_totals, tab_vendor_totals, tab_unit_summary, tab_exec, tab_wow_exc,
- tab_compare, tab_year_summary, tab_inventory, tab_alerts, tab_runrate, tab_no_sales,
+ tab_compare, tab_sku_compare, tab_year_summary, tab_inventory, tab_alerts, tab_runrate, tab_no_sales,
  tab_edit_map, tab_backup, tab_bulk_upload) = tabs
+
 
 
 
@@ -1735,6 +1737,114 @@ with tab_compare:
             st.dataframe(sty, use_container_width=True, hide_index=True)
 # -------------------------
 
+
+# -------------------------
+# SKU Comparison
+# -------------------------
+with tab_sku_compare:
+    st.subheader("SKU Comparison (Month vs Month / Multi-month)")
+
+    if df.empty:
+        st.info("No sales data yet.")
+    else:
+        d = df_all.copy()
+        d["StartDate"] = pd.to_datetime(d["StartDate"], errors="coerce")
+        d = d[d["StartDate"].notna()].copy()
+
+        # Month options across ALL years
+        d["MonthP"] = d["StartDate"].dt.to_period("M")
+        months = sorted(d["MonthP"].unique().tolist())
+        month_labels = [m.to_timestamp().strftime("%B %Y") for m in months]
+        label_to_period = dict(zip(month_labels, months))
+
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            a_pick = st.multiselect(
+                "Selection A (one or more months)",
+                options=month_labels,
+                default=month_labels[-1:] if month_labels else [],
+                key="skucmp_a_months"
+            )
+        with c2:
+            b_pick = st.multiselect(
+                "Selection B (one or more months)",
+                options=month_labels,
+                default=month_labels[-2:-1] if len(month_labels) >= 2 else [],
+                key="skucmp_b_months"
+            )
+        with c3:
+            by = st.selectbox("Filter by", ["Retailer", "Vendor"], key="skucmp_filter_by")
+
+        filt_options = sorted([x for x in d[by].dropna().unique().tolist() if str(x).strip()])
+        sel = st.multiselect(f"Limit to {by}(s) (optional)", options=filt_options, key="skucmp_limit")
+
+        a_periods = [label_to_period[x] for x in a_pick if x in label_to_period]
+        b_periods = [label_to_period[x] for x in b_pick if x in label_to_period]
+
+        if not a_periods or not b_periods:
+            st.info("Pick at least one month in Selection A and Selection B.")
+        else:
+            da = d[d["MonthP"].isin(a_periods)]
+            db = d[d["MonthP"].isin(b_periods)]
+
+            if sel:
+                da = da[da[by].isin(sel)]
+                db = db[db[by].isin(sel)]
+
+            ga = da.groupby("SKU", as_index=False).agg(Units_A=("Units","sum"), Sales_A=("Sales","sum"))
+            gb = db.groupby("SKU", as_index=False).agg(Units_B=("Units","sum"), Sales_B=("Sales","sum"))
+
+            out = ga.merge(gb, on="SKU", how="outer").fillna(0.0)
+            out["Units_Diff"] = out["Units_A"] - out["Units_B"]
+            out["Sales_Diff"] = out["Sales_A"] - out["Sales_B"]
+            out["Units_%"] = out["Units_Diff"] / out["Units_B"].replace(0, np.nan)
+            out["Sales_%"] = out["Sales_Diff"] / out["Sales_B"].replace(0, np.nan)
+
+            # Vendor from vendor map (optional)
+            try:
+                if isinstance(vmap, pd.DataFrame) and "SKU" in vmap.columns and "Vendor" in vmap.columns:
+                    sku_vendor = vmap[["SKU","Vendor"]].drop_duplicates()
+                    out = out.merge(sku_vendor, on="SKU", how="left")
+            except Exception:
+                pass
+
+            sort_by = st.selectbox("Sort by", ["Sales_Diff","Units_Diff","Sales_A","Sales_B","Units_A","Units_B"], key="skucmp_sort")
+            out = out.sort_values(sort_by, ascending=False, kind="mergesort")
+
+            # Totals row
+            total = {
+                "SKU": "TOTAL",
+                "Vendor": "",
+                "Units_A": float(out["Units_A"].sum()),
+                "Sales_A": float(out["Sales_A"].sum()),
+                "Units_B": float(out["Units_B"].sum()),
+                "Sales_B": float(out["Sales_B"].sum()),
+                "Units_Diff": float(out["Units_Diff"].sum()),
+                "Sales_Diff": float(out["Sales_Diff"].sum()),
+                "Units_%": (float(out["Units_Diff"].sum()) / float(out["Units_B"].sum())) if float(out["Units_B"].sum()) else np.nan,
+                "Sales_%": (float(out["Sales_Diff"].sum()) / float(out["Sales_B"].sum())) if float(out["Sales_B"].sum()) else np.nan,
+            }
+            out = pd.concat([out, pd.DataFrame([total])], ignore_index=True)
+
+            cols = ["SKU"]
+            if "Vendor" in out.columns:
+                cols.append("Vendor")
+            cols += ["Units_A","Sales_A","Units_B","Sales_B","Units_Diff","Units_%","Sales_Diff","Sales_%"]
+
+            disp = make_unique_columns(out[cols])
+
+            sty = disp.style.format({
+                "Units_A": fmt_int,
+                "Units_B": fmt_int,
+                "Units_Diff": fmt_int,
+                "Units_%": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "—",
+                "Sales_A": fmt_currency,
+                "Sales_B": fmt_currency,
+                "Sales_Diff": fmt_currency,
+                "Sales_%": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "—",
+            }).applymap(lambda v: f"color: {_color(v)};", subset=["Units_Diff","Sales_Diff"])
+
+            st.dataframe(sty, use_container_width=True, hide_index=True)
 # -------------------------
 # Year Summary
 # -------------------------
