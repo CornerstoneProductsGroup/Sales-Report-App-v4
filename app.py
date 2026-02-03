@@ -169,6 +169,24 @@ def fmt_int(x) -> str:
         return ""
     return f"{int(round(v)):,.0f}"
 
+
+
+def make_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure dataframe has unique column names (pyarrow requirement)."""
+    cols = list(df.columns)
+    seen = {}
+    new_cols = []
+    for c in cols:
+        if c not in seen:
+            seen[c] = 0
+            new_cols.append(c)
+        else:
+            seen[c] += 1
+            new_cols.append(f"{c}.{seen[c]}")
+    df2 = df.copy()
+    df2.columns = new_cols
+    return df2
+
 def fmt_2(x) -> str:
     if x is None or (isinstance(x, float) and np.isnan(x)):
         return ""
@@ -969,7 +987,18 @@ with st.sidebar:
 # Ensure view_year exists for downstream tabs
 view_year = st.session_state.get('view_year', year)
 
-# Load vendor map
+
+# Load vendor map (persistent)
+BUNDLED_VENDOR_MAP = Path(__file__).parent / "vendor_map.xlsx"
+
+# If a default vendor map hasn't been set yet, seed it from the bundled file in the repo.
+try:
+    if (not DEFAULT_VENDOR_MAP.exists()) and BUNDLED_VENDOR_MAP.exists():
+        DEFAULT_VENDOR_MAP.write_bytes(BUNDLED_VENDOR_MAP.read_bytes())
+except Exception:
+    # If we can't write (rare), we'll still allow session upload below.
+    pass
+
 if vm_upload is not None:
     tmp = DATA_DIR / "_session_vendor_map.xlsx"
     tmp.write_bytes(vm_upload.getbuffer())
@@ -1708,7 +1737,11 @@ with tab_year_summary:
         with c1:
             base_year = st.selectbox("Base Year", options=years, index=0, key="ys_base")
         with c2:
-            comp_year = st.selectbox("Comparison Year", options=years, index=(1 if len(years) > 1 else 0), key="ys_comp")
+            comp_opts = [y for y in years if y != int(base_year)]
+        if not comp_opts:
+            st.warning("Only one year of data available. Add another year to compare.")
+            st.stop()
+        comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="ys_comp")
 
         basis = st.radio("Basis (tables + drivers)", options=["Sales", "Units"], index=0, horizontal=True, key="ys_basis")
         value_col = "Sales" if basis == "Sales" else "Units"
@@ -1791,6 +1824,7 @@ with tab_year_summary:
             num_cols = [c for c in [colA, colB, "Delta"] if c in tp2_disp.columns]
             for c in num_cols:
                 tp2_disp[c] = tp2_disp[c].apply(_fmt)
+            tp2_disp = make_unique_columns(tp2_disp)
             st.dataframe(tp2_disp, use_container_width=True, height=_table_height(tp2_disp, max_px=700), hide_index=True)
 
             st.markdown("**Top decreases**")
@@ -1804,6 +1838,7 @@ with tab_year_summary:
             num_cols = [c for c in [colA, colB, "Delta"] if c in tn2_disp.columns]
             for c in num_cols:
                 tn2_disp[c] = tn2_disp[c].apply(_fmt)
+            tn2_disp = make_unique_columns(tn2_disp)
             st.dataframe(tn2_disp, use_container_width=True, height=_table_height(tn2_disp, max_px=700), hide_index=True)
 
         # -------------------------
@@ -1969,7 +2004,11 @@ with tab_alerts:
         with c1:
             base_year = st.selectbox("Base Year", options=years, index=0, key="al_base")
         with c2:
-            comp_year = st.selectbox("Comparison Year", options=years, index=(1 if len(years) > 1 else 0), key="al_comp")
+            comp_opts = [y for y in years if y != int(base_year)]
+        if not comp_opts:
+            st.warning("Only one year of data available. Add another year to compare.")
+            st.stop()
+        comp_year = st.selectbox("Comparison Year", options=comp_opts, index=0, key="al_comp")
 
         basis = st.radio("Basis", options=["Sales", "Units"], index=0, horizontal=True, key="al_basis")
         value_col = "Sales" if basis == "Sales" else "Units"
