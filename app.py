@@ -1738,6 +1738,7 @@ with tab_compare:
 # -------------------------
 
 
+
 # -------------------------
 # SKU Comparison
 # -------------------------
@@ -1791,16 +1792,21 @@ with tab_sku_compare:
                 da = da[da[by].isin(sel)]
                 db = db[db[by].isin(sel)]
 
-            ga = da.groupby("SKU", as_index=False).agg(Units_A=("Units","sum"), Sales_A=("Sales","sum"))
-            gb = db.groupby("SKU", as_index=False).agg(Units_B=("Units","sum"), Sales_B=("Sales","sum"))
+            # If filtering by Vendor, show Retailer column by grouping SKU x Retailer
+            group_keys = ["SKU"]
+            if by == "Vendor":
+                group_keys = ["SKU", "Retailer"]
 
-            out = ga.merge(gb, on="SKU", how="outer").fillna(0.0)
+            ga = da.groupby(group_keys, as_index=False).agg(Units_A=("Units","sum"), Sales_A=("Sales","sum"))
+            gb = db.groupby(group_keys, as_index=False).agg(Units_B=("Units","sum"), Sales_B=("Sales","sum"))
+
+            out = ga.merge(gb, on=group_keys, how="outer").fillna(0.0)
             out["Units_Diff"] = out["Units_A"] - out["Units_B"]
             out["Sales_Diff"] = out["Sales_A"] - out["Sales_B"]
             out["Units_%"] = out["Units_Diff"] / out["Units_B"].replace(0, np.nan)
             out["Sales_%"] = out["Sales_Diff"] / out["Sales_B"].replace(0, np.nan)
 
-            # Vendor from vendor map (optional)
+            # Vendor from vendor map (helpful when filtering by Retailer)
             try:
                 if isinstance(vmap, pd.DataFrame) and "SKU" in vmap.columns and "Vendor" in vmap.columns:
                     sku_vendor = vmap[["SKU","Vendor"]].drop_duplicates()
@@ -1808,12 +1814,13 @@ with tab_sku_compare:
             except Exception:
                 pass
 
-            sort_by = st.selectbox("Sort by", ["Sales_Diff","Units_Diff","Sales_A","Sales_B","Units_A","Units_B"], key="skucmp_sort")
-            out = out.sort_values(sort_by, ascending=False, kind="mergesort")
+            # Default sort (no dropdown): biggest Sales difference first, then Units difference
+            out = out.sort_values(["Sales_Diff","Units_Diff"], ascending=False, kind="mergesort")
 
             # Totals row
             total = {
                 "SKU": "TOTAL",
+                "Retailer": "",
                 "Vendor": "",
                 "Units_A": float(out["Units_A"].sum()),
                 "Sales_A": float(out["Sales_A"].sum()),
@@ -1827,7 +1834,9 @@ with tab_sku_compare:
             out = pd.concat([out, pd.DataFrame([total])], ignore_index=True)
 
             cols = ["SKU"]
-            if "Vendor" in out.columns:
+            if by == "Vendor" and "Retailer" in out.columns:
+                cols.append("Retailer")
+            if by == "Retailer" and "Vendor" in out.columns:
                 cols.append("Vendor")
             cols += ["Units_A","Sales_A","Units_B","Sales_B","Units_Diff","Units_%","Sales_Diff","Sales_%"]
 
@@ -1845,6 +1854,7 @@ with tab_sku_compare:
             }).applymap(lambda v: f"color: {_color(v)};", subset=["Units_Diff","Sales_Diff"])
 
             st.dataframe(sty, use_container_width=True, hide_index=True)
+
 # -------------------------
 # Year Summary
 # -------------------------
