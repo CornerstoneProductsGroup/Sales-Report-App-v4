@@ -892,11 +892,27 @@ def enrich_sales(sales: pd.DataFrame, vmap: pd.DataFrame, price_hist: pd.DataFra
     s["EndDate"] = pd.to_datetime(s["EndDate"], errors="coerce")
 
     m = vmap[["Retailer","SKU","Vendor","Price","MapOrder"]].copy()
-    m["Retailer"] = m["Retailer"].map(_normalize_retailer)
+    # Normalize keys; treat blank Retailer in vendor map as wildcard ("*")
+    m["Retailer"] = m["Retailer"].fillna("*").map(_normalize_retailer)
+    m["Retailer"] = m["Retailer"].replace({"": "*"})
     m["SKU"] = m["SKU"].map(_normalize_sku)
     m["Price"] = pd.to_numeric(m["Price"], errors="coerce")
 
-    out = s.merge(m, on=["Retailer","SKU"], how="left")
+    # 1) Exact match on Retailer + SKU
+    out = s.merge(m[m["Retailer"] != "*"], on=["Retailer","SKU"], how="left")
+
+    # 2) Wildcard match on SKU only for rows still missing pricing/vendor
+    wild = m[m["Retailer"] == "*"][["SKU","Vendor","Price","MapOrder"]].drop_duplicates()
+    if not wild.empty:
+        miss = out["Price"].isna()
+        if miss.any():
+            out2 = out.loc[miss].merge(wild, on=["SKU"], how="left", suffixes=("", "_w"))
+            if "Vendor_w" in out2.columns:
+                out.loc[miss, "Vendor"] = out2["Vendor"].combine_first(out2["Vendor_w"]).values
+            if "Price_w" in out2.columns:
+                out.loc[miss, "Price"] = out2["Price"].combine_first(out2["Price_w"]).values
+            if "MapOrder_w" in out2.columns:
+                out.loc[miss, "MapOrder"] = out2["MapOrder"].combine_first(out2["MapOrder_w"]).values
 
     # Apply effective-dated pricing (if provided), otherwise fallback to vendor map price
     ph = price_hist if price_hist is not None else load_price_history()
