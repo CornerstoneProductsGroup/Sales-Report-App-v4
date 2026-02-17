@@ -712,28 +712,87 @@ def parse_date_range_from_filename(name: str, year_hint: int):
 
     return None, None
 
+
 def read_weekly_workbook(uploaded_file, year: int) -> pd.DataFrame:
-    xls = pd.ExcelFile(uploaded_file)
+    """Read a weekly sales workbook where each sheet is a retailer.
+    Expected layout per sheet:
+      - Column A: SKU (no header required)
+      - Column B: Units
+      - Optional Column C: UnitPrice
+    NOTE: Some retailers (e.g. Zoro/HomeSelects) may have only a single data row.
+    Pandas can sometimes interpret that as header-only depending on the engine,
+    so we include an openpyxl fallback to reliably read the first rows.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    # Prefer openpyxl engine for consistency on Streamlit Cloud
+    try:
+        xls = pd.ExcelFile(uploaded_file, engine="openpyxl")
+    except Exception:
+        xls = pd.ExcelFile(uploaded_file)
+
     fname = getattr(uploaded_file, "name", "upload.xlsx")
     sdt, edt = parse_date_range_from_filename(fname, year_hint=year)
     if sdt is None:
         sdt = pd.Timestamp(date.today() - timedelta(days=7))
         edt = pd.Timestamp(date.today())
 
+    # Build an openpyxl workbook once for fallback reads
+    wb = None
+    try:
+        data = uploaded_file.getvalue() if hasattr(uploaded_file, "getvalue") else uploaded_file.read()
+        wb = openpyxl.load_workbook(BytesIO(data), data_only=True, read_only=True, keep_links=False)
+    except Exception:
+        wb = None
+
     rows = []
     for sh in xls.sheet_names:
         retailer = _normalize_retailer(sh)
-        raw = pd.read_excel(xls, sheet_name=sh, header=None)
-        if raw.shape[1] < 2:
-            continue
+
+        # Primary read (no headers)
+        try:
+            raw = pd.read_excel(xls, sheet_name=sh, header=None, engine="openpyxl")
+        except Exception:
+            raw = pd.read_excel(xls, sheet_name=sh, header=None)
+
+        # Fallback: if pandas returns empty but the sheet has a single row (common for new retailers)
+        if (raw is None) or (raw.shape[0] == 0) or (raw.shape[1] < 2):
+            if wb is not None and sh in wb.sheetnames:
+                ws = wb[sh]
+                vals = []
+                # read first 500 rows, up to 3 cols, stopping after a run of blanks
+                blank_run = 0
+                for r in range(1, 501):
+                    sku = ws.cell(row=r, column=1).value
+                    units = ws.cell(row=r, column=2).value
+                    price = ws.cell(row=r, column=3).value
+                    if (sku is None or str(sku).strip() == "") and (units is None or str(units).strip() == "") and (price is None or str(price).strip() == ""):
+                        blank_run += 1
+                        if blank_run >= 20:
+                            break
+                        continue
+                    blank_run = 0
+                    vals.append([sku, units, price])
+                if vals:
+                    raw = pd.DataFrame(vals)
+                else:
+                    continue
+            else:
+                continue
+
+        # Keep only first 3 columns
         raw = raw.iloc[:, :3].copy() if raw.shape[1] >= 3 else raw.iloc[:, :2].copy()
-        raw.columns = ["SKU","Units","UnitPrice"] if raw.shape[1] == 3 else ["SKU","Units"]
+        raw.columns = ["SKU", "Units", "UnitPrice"] if raw.shape[1] == 3 else ["SKU", "Units"]
+
         raw["SKU"] = raw["SKU"].map(_normalize_sku)
         raw["Units"] = pd.to_numeric(raw["Units"], errors="coerce").fillna(0.0)
+
         if "UnitPrice" in raw.columns:
             raw["UnitPrice"] = pd.to_numeric(raw["UnitPrice"], errors="coerce")
         else:
             raw["UnitPrice"] = np.nan
+
         raw = raw[raw["SKU"].astype(str).str.strip().ne("")]
 
         for _, r in raw.iterrows():
