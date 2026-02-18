@@ -2161,6 +2161,7 @@ with tab_lost_sales:
         lr = make_unique_columns(lr)
         st.dataframe(lr.style.format({str(base_year): _fmt}), use_container_width=True, hide_index=True, height=700)
 
+
 # -------------------------
 # Seasonality
 # -------------------------
@@ -2173,24 +2174,54 @@ with tab_seasonality:
         d = df_all.copy()
         d["StartDate"] = pd.to_datetime(d["StartDate"], errors="coerce")
         d = d[d["StartDate"].notna()].copy()
+        d["Year"] = d["StartDate"].dt.year.astype(int)
         d["Month"] = d["StartDate"].dt.month.astype(int)
 
-        basis = st.radio("Basis", options=["Units", "Sales"], index=0, horizontal=True, key="sea_basis")
-        min_units = st.number_input("Minimum total units (across all years) to include a SKU", min_value=0, max_value=1000000, value=20, step=5, key="sea_min_units")
+        c1, c2, c3 = st.columns([1, 2, 2])
+        with c1:
+            basis = st.radio("Basis", options=["Units", "Sales"], index=0, horizontal=True, key="sea_basis")
+        with c2:
+            years = sorted(d["Year"].unique().tolist())
+            year_opt = ["All years"] + [str(y) for y in years]
+            pick_year = st.selectbox("Year", options=year_opt, index=0, key="sea_year")
+        with c3:
+            month_mode = st.radio("Months", options=["All months (Jan–Dec)", "Custom months"], index=0, horizontal=True, key="sea_month_mode")
+
+        min_units = st.number_input(
+            "Minimum total units (within the selected year/months) to include a SKU",
+            min_value=0, max_value=1_000_000, value=20, step=5, key="sea_min_units"
+        )
+
+        month_name = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+        month_list = [month_name[i] for i in range(1,13)]
+        if month_mode == "Custom months":
+            sel_month_names = st.multiselect("Select months", options=month_list, default=month_list, key="sea_months_pick")
+            sel_months = [k for k,v in month_name.items() if v in sel_month_names]
+        else:
+            sel_months = list(range(1,13))
+
+        # Apply year/month filters for seasonality calc
+        d2 = d[d["Month"].isin(sel_months)].copy()
+        if pick_year != "All years":
+            d2 = d2[d2["Year"] == int(pick_year)].copy()
+
         value_col = "Units" if basis == "Units" else "Sales"
 
-        m = d.groupby(["SKU","Month"], as_index=False).agg(v=(value_col,"sum"))
+        # Monthly totals per SKU
+        m = d2.groupby(["SKU","Month"], as_index=False).agg(v=(value_col,"sum"))
 
+        # Seasonality score: max_month_share (higher = more seasonal)
         tot = m.groupby("SKU", as_index=False).agg(total=("v","sum"))
         mx = m.sort_values("v", ascending=False).groupby("SKU", as_index=False).first().rename(columns={"Month":"PeakMonth","v":"PeakVal"})
         s = tot.merge(mx, on="SKU", how="left")
         s["SeasonalityScore"] = s["PeakVal"] / s["total"].replace(0, np.nan)
 
-        # Always filter by total UNITS sold (regardless of basis)
-        units_tot = d.groupby("SKU", as_index=False).agg(UnitsTotal=("Units","sum"))
-        s = s.merge(units_tot, on="SKU", how="left").fillna({"UnitsTotal": 0})
-        s = s[s["UnitsTotal"] >= float(min_units)].copy()
+        # Filter by total UNITS sold (within selected year/months), regardless of basis
+        units_tot = d2.groupby("SKU", as_index=False).agg(TotalUnits=("Units","sum"))
+        s = s.merge(units_tot, on="SKU", how="left").fillna({"TotalUnits": 0})
+        s = s[s["TotalUnits"] >= float(min_units)].copy()
 
+        # Vendor labels
         try:
             if isinstance(vmap, pd.DataFrame) and "SKU" in vmap.columns and "Vendor" in vmap.columns:
                 s = s.merge(vmap[["SKU","Vendor"]].drop_duplicates(), on="SKU", how="left")
@@ -2199,19 +2230,26 @@ with tab_seasonality:
 
         s = s.sort_values("SeasonalityScore", ascending=False)
         top = s.head(20).copy()
-
-        month_name = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
         top["PeakMonthName"] = top["PeakMonth"].map(month_name)
 
-        st.markdown("### Top 20 seasonal SKUs")
-        tbl_cols = ["SKU"] + (["Vendor"] if "Vendor" in top.columns else []) + ["PeakMonthName","SeasonalityScore","UnitsTotal","total"]
-        tbl = top[tbl_cols].copy().rename(columns={"total": f"Total {basis}", "SeasonalityScore":"Seasonality", "UnitsTotal":"Total Units"})
-        tbl = make_unique_columns(tbl)
+        st.markdown("### Top seasonal SKUs")
+        tbl_cols = ["SKU"]
+        if "Vendor" in top.columns:
+            tbl_cols.append("Vendor")
+        tbl_cols += ["PeakMonthName","SeasonalityScore","TotalUnits"]
+
+        tbl = top[tbl_cols].copy().rename(columns={
+            "PeakMonthName": "Peak Month",
+            "SeasonalityScore": "Seasonality",
+            "TotalUnits": "Total Units",
+        })
+        # Ensure no duplicate columns (prevents Streamlit arrow errors)
+        tbl = tbl.loc[:, ~tbl.columns.duplicated()].copy()
+
         st.dataframe(
             tbl.style.format({
                 "Seasonality": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "—",
                 "Total Units": fmt_int,
-                f"Total {basis}": (fmt_int if basis=="Units" else fmt_currency)
             }),
             use_container_width=True,
             hide_index=True
@@ -2220,8 +2258,14 @@ with tab_seasonality:
         st.divider()
         st.markdown("### Seasonal profiles")
 
-        m2 = d.groupby(["SKU","Month"], as_index=False).agg(v=(value_col,"sum"), yrs=("StartDate", lambda s: s.dt.year.nunique()))
+        # Average per year per month (within the selected filters)
+        m2 = d2.groupby(["SKU","Month"], as_index=False).agg(
+            v=(value_col,"sum"),
+            yrs=("Year","nunique")
+        )
         m2["AvgPerYear"] = m2["v"] / m2["yrs"].replace(0, np.nan)
+
+        import matplotlib.pyplot as plt
 
         for _, row in top.iterrows():
             sku0 = row["SKU"]
@@ -2229,17 +2273,24 @@ with tab_seasonality:
             peak0 = row.get("PeakMonthName", "")
             score0 = row.get("SeasonalityScore", np.nan)
 
-            title = f"**{sku0}**"
+            title = f"{sku0}"
             if pd.notna(vend0) and str(vend0).strip():
                 title += f" — {vend0}"
             if pd.notna(score0):
-                title += f" | Peak: **{peak0}** | Seasonality: **{score0*100:.1f}%**"
-            st.markdown(title)
+                title += f" | Peak: {peak0} | Seasonality: {score0*100:.1f}%"
+
+            st.markdown(f"**{title}**")
 
             prof = m2[m2["SKU"] == sku0][["Month","AvgPerYear"]].copy()
             prof = prof.set_index("Month").reindex(range(1,13)).fillna(0.0)
-            prof.index = [month_name[i] for i in prof.index]
-            st.line_chart(prof)
+
+            fig, ax = plt.subplots()
+            ax.plot(list(range(1,13)), prof["AvgPerYear"].to_numpy())
+            ax.set_xticks(list(range(1,13)))
+            ax.set_xticklabels([month_name[i] for i in range(1,13)])
+            ax.set_xlabel("Month")
+            ax.set_ylabel(f"Avg {basis} per year")
+            st.pyplot(fig, clear_figure=True)
 # -------------------------
 # Year Summary
 # -------------------------
