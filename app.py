@@ -1232,6 +1232,7 @@ def to_pdf_bytes(title: str, sections: list[tuple[str, list[str]]]) -> bytes:
 tabs = st.tabs([
     "Retailer Totals",
     "Vendor Totals",
+    "Top SKUs",
     "Unit Summary",
     "Executive Summary",
     "WoW Exceptions",
@@ -1243,16 +1244,18 @@ tabs = st.tabs([
     "Year Summary",
     "Data Inventory",
     "Insights & Alerts",
+    "Seasonality Heatmap",
     "Run-Rate Forecast",
     "No Sales SKUs",
     "Edit Vendor Map",
     "Backup / Restore",
     "Bulk Data Upload",
 ])
-(tab_retail_totals, tab_vendor_totals, tab_unit_summary, tab_exec, tab_wow_exc,
+(tab_retail_totals, tab_vendor_totals, tab_top_skus, tab_unit_summary, tab_exec, tab_wow_exc,
  tab_compare, tab_sku_compare, tab_sku_health, tab_lost_sales, tab_seasonality,
- tab_year_summary, tab_inventory, tab_alerts, tab_runrate, tab_no_sales,
+ tab_year_summary, tab_inventory, tab_alerts, tab_sea_heat, tab_runrate, tab_no_sales,
  tab_edit_map, tab_backup, tab_bulk_upload) = tabs
+
 
 
 
@@ -1428,6 +1431,112 @@ with tab_vendor_totals:
         st.dataframe(sty, use_container_width=True, height=_table_height(ud, max_px=1400), hide_index=True)
 
 # Unit Summary
+with tab_top_skus:
+    st.subheader("Top SKUs (across all retailers)")
+
+    if df_all.empty:
+        st.info("No sales data yet.")
+    else:
+        d = df_all.copy()
+        d["StartDate"] = pd.to_datetime(d["StartDate"], errors="coerce")
+        d = d[d["StartDate"].notna()].copy()
+        d["Year"] = d["StartDate"].dt.year.astype(int)
+        d["Month"] = d["StartDate"].dt.month.astype(int)
+
+        years = sorted(d["Year"].unique().tolist())
+        month_name = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+        month_list = [month_name[i] for i in range(1,13)]
+
+        c1, c2, c3, c4 = st.columns([1, 2, 1, 1])
+        with c1:
+            year_opt = ["All years"] + [str(y) for y in years]
+            pick_year = st.selectbox("Year", options=year_opt, index=0, key="ts_year")
+        with c2:
+            month_mode = st.radio("Months", options=["All months", "Custom months"], index=0, horizontal=True, key="ts_month_mode")
+            if month_mode == "Custom months":
+                sel_month_names = st.multiselect("Select months", options=month_list, default=month_list, key="ts_months")
+                sel_months = [k for k,v in month_name.items() if v in sel_month_names]
+            else:
+                sel_months = list(range(1,13))
+        with c3:
+            sort_by = st.selectbox("Rank by", options=["Sales", "Units"], index=0, key="ts_rank_by")
+        with c4:
+            top_n = st.number_input("Top N", min_value=10, max_value=5000, value=50, step=10, key="ts_topn")
+
+        f1, f2 = st.columns([2, 2])
+        with f1:
+            vendor_filter = st.multiselect(
+                "Vendor filter (optional)",
+                options=sorted([x for x in d["Vendor"].dropna().unique().tolist() if str(x).strip()]),
+                key="ts_vendor_filter"
+            )
+        with f2:
+            retailer_filter = st.multiselect(
+                "Retailer filter (optional)",
+                options=sorted([x for x in d["Retailer"].dropna().unique().tolist() if str(x).strip()]),
+                key="ts_retailer_filter"
+            )
+
+        d2 = d[d["Month"].isin(sel_months)].copy()
+        if pick_year != "All years":
+            d2 = d2[d2["Year"] == int(pick_year)].copy()
+        if vendor_filter:
+            d2 = d2[d2["Vendor"].isin(vendor_filter)]
+        if retailer_filter:
+            d2 = d2[d2["Retailer"].isin(retailer_filter)]
+
+        agg = d2.groupby("SKU", as_index=False).agg(
+            Units=("Units","sum"),
+            Sales=("Sales","sum"),
+            Retailers=("Retailer","nunique"),
+        )
+
+        if agg.empty:
+            st.info("No rows match your filters.")
+        else:
+            agg = agg.sort_values(sort_by, ascending=False, kind="mergesort").head(int(top_n))
+            agg = make_unique_columns(agg)
+
+            st.dataframe(
+                agg.style.format({
+                    "Units": fmt_int,
+                    "Sales": fmt_currency,
+                    "Retailers": fmt_int,
+                }),
+                use_container_width=True,
+                hide_index=True,
+                height=650
+            )
+
+            st.divider()
+            st.markdown("### SKU lookup (cross-retailer totals + breakdown)")
+
+            sku_q = st.text_input("Type a SKU to inspect (example: EGLAI1)", value="", key="ts_sku_q").strip()
+            if sku_q:
+                qn = str(sku_q).strip().upper()
+                dd = d2.copy()
+                dd["SKU_N"] = dd["SKU"].astype(str).str.strip().str.upper()
+                dd = dd[dd["SKU_N"] == qn].copy()
+
+                if dd.empty:
+                    st.warning("No matching rows for that SKU in the current filters.")
+                else:
+                    tot_units = float(dd["Units"].sum())
+                    tot_sales = float(dd["Sales"].sum())
+                    a, b, c = st.columns([1,1,2])
+                    a.metric("Total Units", fmt_int(tot_units))
+                    b.metric("Total Sales", fmt_currency(tot_sales))
+                    c.caption("Breakdown below is by retailer for the selected year/month filters.")
+
+                    by_ret = dd.groupby("Retailer", as_index=False).agg(Units=("Units","sum"), Sales=("Sales","sum"))
+                    by_ret = by_ret.sort_values("Sales", ascending=False, kind="mergesort")
+                    st.dataframe(
+                        by_ret.style.format({"Units": fmt_int, "Sales": fmt_currency}),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+
 with tab_unit_summary:
     st.subheader("Unit Summary")
     retailers = sorted(vmap["Retailer"].dropna().unique().tolist())
@@ -2265,8 +2374,8 @@ with tab_seasonality:
         )
         m2["AvgPerYear"] = m2["v"] / m2["yrs"].replace(0, np.nan)
 
-        import matplotlib.pyplot as plt
 
+        # Interactive chart: keep months in Jan→Dec order using a datetime index
         for _, row in top.iterrows():
             sku0 = row["SKU"]
             vend0 = row.get("Vendor", "")
@@ -2284,13 +2393,12 @@ with tab_seasonality:
             prof = m2[m2["SKU"] == sku0][["Month","AvgPerYear"]].copy()
             prof = prof.set_index("Month").reindex(range(1,13)).fillna(0.0)
 
-            fig, ax = plt.subplots()
-            ax.plot(list(range(1,13)), prof["AvgPerYear"].to_numpy())
-            ax.set_xticks(list(range(1,13)))
-            ax.set_xticklabels([month_name[i] for i in range(1,13)])
-            ax.set_xlabel("Month")
-            ax.set_ylabel(f"Avg {basis} per year")
-            st.pyplot(fig, clear_figure=True)
+            # Map 1..12 -> a fixed year monthly datetime index to preserve order
+            dt_index = pd.date_range("2020-01-01", periods=12, freq="MS")
+            y = prof["AvgPerYear"].to_numpy()
+            chart_df = pd.DataFrame({"AvgPerYear": y}, index=dt_index)
+            st.line_chart(chart_df)
+
 # -------------------------
 # Year Summary
 # -------------------------
