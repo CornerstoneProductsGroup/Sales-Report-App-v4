@@ -2176,6 +2176,7 @@ with tab_seasonality:
         d["Month"] = d["StartDate"].dt.month.astype(int)
 
         basis = st.radio("Basis", options=["Units", "Sales"], index=0, horizontal=True, key="sea_basis")
+        min_units = st.number_input("Minimum total units (across all years) to include a SKU", min_value=0, max_value=1000000, value=20, step=5, key="sea_min_units")
         value_col = "Units" if basis == "Units" else "Sales"
 
         m = d.groupby(["SKU","Month"], as_index=False).agg(v=(value_col,"sum"))
@@ -2184,6 +2185,11 @@ with tab_seasonality:
         mx = m.sort_values("v", ascending=False).groupby("SKU", as_index=False).first().rename(columns={"Month":"PeakMonth","v":"PeakVal"})
         s = tot.merge(mx, on="SKU", how="left")
         s["SeasonalityScore"] = s["PeakVal"] / s["total"].replace(0, np.nan)
+
+        # Always filter by total UNITS sold (regardless of basis)
+        units_tot = d.groupby("SKU", as_index=False).agg(UnitsTotal=("Units","sum"))
+        s = s.merge(units_tot, on="SKU", how="left").fillna({"UnitsTotal": 0})
+        s = s[s["UnitsTotal"] >= float(min_units)].copy()
 
         try:
             if isinstance(vmap, pd.DataFrame) and "SKU" in vmap.columns and "Vendor" in vmap.columns:
@@ -2198,12 +2204,13 @@ with tab_seasonality:
         top["PeakMonthName"] = top["PeakMonth"].map(month_name)
 
         st.markdown("### Top 20 seasonal SKUs")
-        tbl_cols = ["SKU"] + (["Vendor"] if "Vendor" in top.columns else []) + ["PeakMonthName","SeasonalityScore","total"]
-        tbl = top[tbl_cols].copy().rename(columns={"total": f"Total {basis}", "SeasonalityScore":"Seasonality"})
+        tbl_cols = ["SKU"] + (["Vendor"] if "Vendor" in top.columns else []) + ["PeakMonthName","SeasonalityScore","UnitsTotal","total"]
+        tbl = top[tbl_cols].copy().rename(columns={"total": f"Total {basis}", "SeasonalityScore":"Seasonality", "UnitsTotal":"Total Units"})
         tbl = make_unique_columns(tbl)
         st.dataframe(
             tbl.style.format({
                 "Seasonality": lambda v: f"{v*100:.1f}%" if pd.notna(v) else "—",
+                "Total Units": fmt_int,
                 f"Total {basis}": (fmt_int if basis=="Units" else fmt_currency)
             }),
             use_container_width=True,
@@ -2233,7 +2240,6 @@ with tab_seasonality:
             prof = prof.set_index("Month").reindex(range(1,13)).fillna(0.0)
             prof.index = [month_name[i] for i in prof.index]
             st.line_chart(prof)
-
 # -------------------------
 # Year Summary
 # -------------------------
